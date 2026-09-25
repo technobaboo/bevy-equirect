@@ -37,7 +37,8 @@ impl CubeSide {
         let bpp = format.pixel_size() as u32;
         let out_size = res * res * bpp;
         let mut out = vec![0u8; out_size as usize];
-        for (x, y) in (0..res).flat_map(|x| (0..res).map(move |y| (x, y))) {
+        // rows outside, so the writes below walk through `out` in order
+        for (x, y) in (0..res).flat_map(|y| (0..res).map(move |x| (x, y))) {
             let pos = self.get_xyz_form_pixel_coords(x, y, res);
             let angles = self.get_angles_from_xyz(pos);
             let uv = self.get_uv_from_angles(angles);
@@ -82,5 +83,40 @@ impl CubeSide {
             CubeSide::Z => vec3(offset_x, -offset_y, 1.0),
             CubeSide::NegZ => vec3(-offset_x, -offset_y, -1.0),
         }
+    }
+}
+
+#[test]
+fn row_order_matches_the_original_column_order() {
+    let (width, height, res) = (64, 32, 16);
+    let format = TextureFormat::Rgba8Unorm;
+    let mut seed = 0x2545_f491_u32;
+    let data: Vec<u8> = (0..width * height * 4)
+        .map(|_| {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed as u8
+        })
+        .collect();
+    for face in CubeSide::ALL {
+        let bpp = 4;
+        let mut expected = vec![0u8; (res * res * bpp) as usize];
+        for (x, y) in (0..res).flat_map(|x| (0..res).map(move |y| (x, y))) {
+            let uv = face.get_uv_from_angles(
+                face.get_angles_from_xyz(face.get_xyz_form_pixel_coords(x, y, res)),
+            );
+            let pixel_x = (uv.x * width as f32).floor() as u32;
+            let pixel_y = (uv.y * height as f32).floor() as u32;
+            let index = ((pixel_y * width * bpp) + (pixel_x * bpp)) as usize;
+            let out_index = ((y * res * bpp) + (x * bpp)) as usize;
+            expected[out_index..out_index + bpp as usize]
+                .copy_from_slice(&data[index..index + bpp as usize]);
+        }
+        assert_eq!(
+            face.gen_face(width, height, &data, res, format),
+            expected,
+            "{face:?}"
+        );
     }
 }
